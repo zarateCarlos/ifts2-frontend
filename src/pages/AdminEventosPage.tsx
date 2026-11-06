@@ -32,6 +32,7 @@ import type {
 import { FileDropField } from '../components/FileDropField'
 import { SourceBadge } from '../components/SourceBadge'
 import { AdminSaveStatus } from '../components/AdminSaveStatus'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   isFeatured,
   loadFeaturedOrder,
@@ -154,6 +155,11 @@ export function AdminEventosPage({ embedded = false }: { embedded?: boolean }) {
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [featuredOrder, setFeaturedOrder] = useState(loadFeaturedOrder)
   const [starBusy, setStarBusy] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<
+    | null
+    | { kind: 'foto'; fotoId: string }
+    | { kind: 'portada'; eventoId: string }
+  >(null)
 
   const load = useCallback(async () => {
     setRows(await adminListEventos())
@@ -460,48 +466,53 @@ export function AdminEventosPage({ embedded = false }: { embedded?: boolean }) {
     }
   }
 
-  async function onDeleteFoto(fotoId: string) {
+  function requestDeleteFoto(fotoId: string) {
     if (!draft?.id) return
-    const ok = window.confirm(
-      '¿Seguro que querés eliminar esta foto del Storage?',
-    )
-    if (!ok) return
-    const toastId = pushAdminToast({
-      kind: 'loading',
-      title: 'Borrando foto…',
-    })
-    setSaving(true)
-    setSaveStatus('saving')
-    try {
-      await adminDeleteEventoFoto(draft.id, fotoId)
-      setFotos(await adminListEventoFotos(draft.id))
-      await load()
-      notifyStorageChanged()
-      await notifyPublicRefresh()
-      replaceAdminToast(toastId, {
-        kind: 'success',
-        title: 'Foto borrada',
-      })
-      flash('saved', 'Foto borrada')
-    } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : 'No se pudo borrar'
-      replaceAdminToast(toastId, {
-        kind: 'error',
-        title: 'No se pudo borrar',
-        message: msg,
-      })
-      flash('error', msg)
-    } finally {
-      setSaving(false)
-    }
+    setPendingDelete({ kind: 'foto', fotoId })
   }
 
-  async function onPurgePortada(eventoId: string) {
-    const ok = window.confirm(
-      '¿Seguro que querés borrar esta portada del Storage?\n\nSe libera espacio del plan free.',
-    )
-    if (!ok) return
+  function requestPurgePortada(eventoId: string) {
+    setPendingDelete({ kind: 'portada', eventoId })
+  }
+
+  async function runPendingDelete() {
+    if (!pendingDelete) return
+    const action = pendingDelete
+    setPendingDelete(null)
+    if (action.kind === 'foto') {
+      if (!draft?.id) return
+      const toastId = pushAdminToast({
+        kind: 'loading',
+        title: 'Borrando foto…',
+      })
+      setSaving(true)
+      setSaveStatus('saving')
+      try {
+        await adminDeleteEventoFoto(draft.id, action.fotoId)
+        setFotos(await adminListEventoFotos(draft.id))
+        await load()
+        notifyStorageChanged()
+        await notifyPublicRefresh()
+        replaceAdminToast(toastId, {
+          kind: 'success',
+          title: 'Foto borrada',
+        })
+        flash('saved', 'Foto borrada')
+      } catch (err) {
+        const msg =
+          err instanceof ApiError ? err.message : 'No se pudo borrar'
+        replaceAdminToast(toastId, {
+          kind: 'error',
+          title: 'No se pudo borrar',
+          message: msg,
+        })
+        flash('error', msg)
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
+    const eventoId = action.eventoId
     const toastId = pushAdminToast({
       kind: 'loading',
       title: 'Borrando portada…',
@@ -731,7 +742,7 @@ export function AdminEventosPage({ embedded = false }: { embedded?: boolean }) {
                       type="button"
                       className="btn btn--danger btn--small"
                       disabled={saving}
-                      onClick={() => void onPurgePortada(draft.id!)}
+                      onClick={() => requestPurgePortada(draft.id!)}
                     >
                       Borrar portada
                     </button>
@@ -782,7 +793,7 @@ export function AdminEventosPage({ embedded = false }: { embedded?: boolean }) {
                       type="button"
                       className="btn btn--danger btn--small"
                       disabled={saving}
-                      onClick={() => onDeleteFoto(f.id)}
+                      onClick={() => requestDeleteFoto(f.id)}
                     >
                       Borrar
                     </button>
@@ -843,7 +854,7 @@ export function AdminEventosPage({ embedded = false }: { embedded?: boolean }) {
                     className="btn btn--danger btn--small"
                     disabled={saving}
                     title="Borrar portada del Storage"
-                    onClick={() => void onPurgePortada(ev.id)}
+                    onClick={() => requestPurgePortada(ev.id)}
                   >
                     Borrar
                   </button>
@@ -857,6 +868,26 @@ export function AdminEventosPage({ embedded = false }: { embedded?: boolean }) {
       {rows.length === 0 && (
         <p className="muted">Todavía no hay eventos en el CMS.</p>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete != null}
+        title={
+          pendingDelete?.kind === 'foto'
+            ? '¿Eliminar foto?'
+            : '¿Borrar portada?'
+        }
+        message={
+          pendingDelete?.kind === 'foto'
+            ? 'Vas a eliminar esta foto del Storage. Esta acción requiere confirmación.'
+            : 'Vas a borrar la portada del Storage y liberar espacio. Esta acción requiere confirmación.'
+        }
+        confirmLabel={
+          pendingDelete?.kind === 'foto' ? 'Sí, eliminar' : 'Sí, borrar'
+        }
+        busy={saving}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void runPendingDelete()}
+      />
     </div>
   )
 }

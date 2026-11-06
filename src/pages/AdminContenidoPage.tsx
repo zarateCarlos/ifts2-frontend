@@ -26,6 +26,7 @@ import type { EditorialEstado, NoticiaRequest } from '../api/types'
 import { FileDropField } from '../components/FileDropField'
 import { SourceBadge } from '../components/SourceBadge'
 import { AdminSaveStatus } from '../components/AdminSaveStatus'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   isFeatured,
   loadFeaturedOrder,
@@ -77,6 +78,11 @@ export function AdminContenidoPage() {
   const [coverFile, setCoverFile] = useState<File | null>(null)
   const [featuredOrder, setFeaturedOrder] = useState(loadFeaturedOrder)
   const [starBusy, setStarBusy] = useState(false)
+  const [pendingAction, setPendingAction] = useState<
+    | null
+    | { kind: 'estado'; id: string; estado: EditorialEstado; title: string }
+    | { kind: 'purge'; id: string; title: string }
+  >(null)
 
   useEffect(() => setRows(all), [all])
 
@@ -255,7 +261,7 @@ export function AdminContenidoPage() {
     }
   }
 
-  async function onPurgePortada(id: string) {
+  function requestPurgePortada(id: string, title: string) {
     if (!isUuid(id)) {
       pushAdminToast({
         kind: 'error',
@@ -265,10 +271,29 @@ export function AdminContenidoPage() {
       setNote('Guardá la publicación antes de vaciar la portada.')
       return
     }
-    const ok = window.confirm(
-      '¿Seguro que querés borrar esta portada del Storage?\n\nSe libera espacio. Podés subir otra después.',
-    )
-    if (!ok) return
+    setPendingAction({ kind: 'purge', id, title })
+  }
+
+  function requestEstado(
+    id: string,
+    estado: EditorialEstado,
+    title: string,
+  ) {
+    if (estado === 'PUBLICADA') {
+      void setEstado(id, estado)
+      return
+    }
+    setPendingAction({ kind: 'estado', id, estado, title })
+  }
+
+  async function runPendingAction() {
+    if (!pendingAction) return
+    const action = pendingAction
+    setPendingAction(null)
+    if (action.kind === 'estado') {
+      await setEstado(action.id, action.estado)
+      return
+    }
     const toastId = pushAdminToast({
       kind: 'loading',
       title: 'Borrando portada…',
@@ -276,8 +301,8 @@ export function AdminContenidoPage() {
     setSaving(true)
     setNote('')
     try {
-      await adminDeleteNoticiaPortada(id)
-      if (draft?.id === id) setDraft({ ...draft, imageUrl: '' })
+      await adminDeleteNoticiaPortada(action.id)
+      if (draft?.id === action.id) setDraft({ ...draft, imageUrl: '' })
       await fetchSiteContent()
       await reload()
       notifyStorageChanged()
@@ -575,7 +600,7 @@ export function AdminContenidoPage() {
                   className="btn btn--danger btn--small"
                   disabled={saving}
                   title="Borrar imagen del Storage"
-                  onClick={() => void onPurgePortada(item.id)}
+                  onClick={() => requestPurgePortada(item.id, item.title)}
                 >
                   Borrar
                 </button>
@@ -585,7 +610,9 @@ export function AdminContenidoPage() {
                   type="button"
                   className="btn btn--ghost"
                   disabled={saving}
-                  onClick={() => setEstado(item.id, 'BORRADOR')}
+                  onClick={() =>
+                    requestEstado(item.id, 'BORRADOR', item.title)
+                  }
                 >
                   Retirar
                 </button>
@@ -594,7 +621,9 @@ export function AdminContenidoPage() {
                   type="button"
                   className="btn btn--ghost"
                   disabled={saving}
-                  onClick={() => setEstado(item.id, 'PUBLICADA')}
+                  onClick={() =>
+                    requestEstado(item.id, 'PUBLICADA', item.title)
+                  }
                 >
                   Publicar
                 </button>
@@ -603,7 +632,9 @@ export function AdminContenidoPage() {
                 type="button"
                 className="btn btn--ghost"
                 disabled={saving}
-                onClick={() => setEstado(item.id, 'ARCHIVADA')}
+                onClick={() =>
+                  requestEstado(item.id, 'ARCHIVADA', item.title)
+                }
               >
                 Archivar
               </button>
@@ -617,6 +648,34 @@ export function AdminContenidoPage() {
       )}
         </>
       )}
+
+      <ConfirmDialog
+        open={pendingAction != null}
+        title={
+          pendingAction?.kind === 'purge'
+            ? '¿Borrar portada?'
+            : pendingAction?.estado === 'ARCHIVADA'
+              ? '¿Archivar publicación?'
+              : '¿Retirar publicación?'
+        }
+        message={
+          pendingAction?.kind === 'purge'
+            ? `Vas a borrar la portada de «${pendingAction.title}» del Storage. Se libera espacio; podés subir otra después.`
+            : pendingAction?.estado === 'ARCHIVADA'
+              ? `«${pendingAction.title}» pasará a ARCHIVADA y dejará de mostrarse en el sitio. Esta acción requiere confirmación.`
+              : `«${pendingAction?.title ?? ''}» pasará a BORRADOR y saldrá del listado público. Esta acción requiere confirmación.`
+        }
+        confirmLabel={
+          pendingAction?.kind === 'purge'
+            ? 'Sí, borrar'
+            : pendingAction?.estado === 'ARCHIVADA'
+              ? 'Sí, archivar'
+              : 'Sí, retirar'
+        }
+        busy={saving}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={() => void runPendingAction()}
+      />
     </div>
   )
 }
