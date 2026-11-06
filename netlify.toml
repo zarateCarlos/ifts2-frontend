@@ -1,0 +1,9 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# SPA fallback (refuerzo por si _redirects no se copia)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
